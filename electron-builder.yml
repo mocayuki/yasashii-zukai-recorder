@@ -1,0 +1,35 @@
+# 配布用の .app / DMG を作る設定（npm run dist）
+appId: jp.moca.yasashii-zukai-recorder
+# .app の中の名前（実行ファイル・補助アプリ・CFBundleName）は英字にする。日本語名（特に「ダ」のような
+# 濁点付きの文字）だと、Electron が CFBundleName から組み立てる補助アプリのパスと、macOS のファイル名
+# （分解された形 NFD）が食い違い、「Unable to find helper app」で起動直後に落ちる。
+# 見た目の名前（Dock・タイトル）は下の CFBundleDisplayName で日本語にする（CFBundleName は変えない）
+productName: YasashiiZukaiRecorder
+directories:
+  output: release
+files:
+  - build/**
+  - dist-electron/**
+  - package.json
+  - node_modules/ffmpeg-static/**
+# ffmpeg の実行ファイルは asar の中からは動かせないので外に出す
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+# テロップの書体（Zen Maru Gothic Black、OFL）。ffmpeg の subtitles フィルターに fontsdir で渡す
+extraResources:
+  - from: resources/fonts
+    to: fonts
+mac:
+  category: public.app-category.productivity
+  icon: resources/icon.icns
+  target:
+    - dmg
+  # 個人用なので署名・公証はしない。初回起動時は右クリック→開く
+  identity: null
+  hardenedRuntime: false
+  extendInfo:
+    CFBundleDisplayName: やさしい図解レコーダー
+    NSMicrophoneUsageDescription: 音声を録音するためにマイクを使います。
+    NSCameraUsageDescription: このアプリはカメラを使いません。
+dmg:
+  title: やさしい図解レコーダー

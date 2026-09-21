@@ -1,0 +1,38 @@
+# やさしい図解レコーダーの投稿ハブ。
+#   npx wrangler login            … Cloudflare にログイン（ブラウザー）
+#   npx wrangler d1 create hub    … D1 を作り、下の database_id を書き換える
+#   npx wrangler r2 bucket create yasashii-hub-media
+#   npm run db:remote             … 表を作る
+#   npx wrangler secret put HUB_TOKEN / X_CLIENT_ID / X_CLIENT_SECRET
+#   npm run deploy
+name = "yasashii-hub"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# 配置したあとの公開 URL（末尾に / を付けない）。OAuth の戻り先や、SNS に渡す動画の URL に使う
+PUBLIC_URL = "http://localhost:8787"
+# TikTok の開発者ポータルの URL 所有確認（https://<ハブ>/tiktok<code>.txt を返す）
+TIKTOK_SITE_VERIFICATION = ""
+
+[[d1_databases]]
+binding = "DB"
+database_name = "hub"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "yasashii-hub-media"
+
+# 自分自身への binding。cron は仕事を 1 件ずつここ経由で動かす（呼び出しごとに副要求（subrequest）の上限が新しくなる。
+# 無料プランは 1 回の呼び出しで 50 件までなので、長い動画の処理待ちを 1 回でやると尽きる）
+[[services]]
+binding = "SELF"
+service = "yasashii-hub"
+
+[triggers]
+# 30 分ごとに、時刻の来た予約を投稿する。日本時間の昼 12 時〜夜 23 時半だけ（cron は UTC なので 3 時〜14 時半）。
+# すぐ投稿は cron を待たずに動くので、ここは予約だけに効く
+crons = ["0,30 3-14 * * *"]

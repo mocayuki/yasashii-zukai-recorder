@@ -1,0 +1,13 @@
+# Package Managers
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+bun.lock
+bun.lockb
+
+# 生成物・旧版
+/build
+/dist-electron
+/release
+/.svelte-kit
+/legacy

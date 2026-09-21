@@ -1,0 +1,39 @@
+node_modules
+
+# ビルド生成物
+/.svelte-kit
+/build
+/dist-electron
+/release
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# 収録データ・設定・鍵は入れない（保存先はリポジトリ外だが念のため）
+/data
+*.webm
+*.m4a
+*.mp4
+*.srt
+.env
+.env.*
+!.env.example
+
+# OS / エディター
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# 投稿ハブ
+/hub/.wrangler
+/hub/.dev.vars
+/.wrangler-dev.log
+
+# ローカルの設定とキャッシュ
+settings.json
+*.pem
+*.key
+/hub/.dev.vars.*
+!/hub/.dev.vars.example
+/.cache
