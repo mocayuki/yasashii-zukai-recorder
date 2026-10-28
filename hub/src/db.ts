@@ -5,7 +5,13 @@ import type {
 	HubPlatform,
 	HubPostRequest
 } from '../../shared/publish';
+import type { Env } from './env';
+import { decryptToken, encryptToken, isEncrypted, tokenKey } from './crypto';
 
+/** アカウントの読み書きに要るもの: D1 と、トークンを暗号化する鍵（TOKEN_KEY） */
+export type AccountStore = Pick<Env, 'DB' | 'TOKEN_KEY'>;
+
+/** accounts の 1 行。access_token / refresh_token は D1 の中では暗号化（crypto.ts の enc1:…）、この型の上では平文 */
 export interface AccountRow {
 	platform: HubPlatform;
 	user_id: string;
@@ -54,39 +60,61 @@ export function toJob(r: JobRow): HubJob {
 	};
 }
 
+/**
+ * 読んで、トークンを復号して返す（返す行のトークンは平文。呼ぶ側はそのまま SNS に渡し、平文どうしで比べる）。
+ * 暗号化より前に入れた平文の行を読んだときは、そのまま使い、暗号化して書き戻す（読んだときに直す。表の形は変えない）
+ */
 export async function getAccount(
-	db: D1Database,
+	env: AccountStore,
 	platform: HubPlatform
 ): Promise<AccountRow | null> {
-	return (
-		(await db
-			.prepare('SELECT * FROM accounts WHERE platform = ?')
-			.bind(platform)
-			.first<AccountRow>()) ?? null
-	);
+	const key = await tokenKey(env);
+	const row = await env.DB.prepare('SELECT * FROM accounts WHERE platform = ?')
+		.bind(platform)
+		.first<AccountRow>();
+	if (!row) return null;
+	const open = (s: string) => (isEncrypted(s) ? decryptToken(key, s) : Promise.resolve(s));
+	const plain: AccountRow = {
+		...row,
+		access_token: await open(row.access_token),
+		refresh_token: row.refresh_token === null ? null : await open(row.refresh_token)
+	};
+	const stillPlain =
+		!isEncrypted(row.access_token) ||
+		(row.refresh_token !== null && !isEncrypted(row.refresh_token));
+	if (stillPlain) {
+		// 書き戻すのは、読んだときの値のままの行だけ（その間に別の呼び出しが新しいトークンを入れていたら、そちらを残す）。
+		// updated_at は触らない（つないだ・更新した時刻のままにする）
+		await env.DB.prepare(
+			'UPDATE accounts SET access_token = ?, refresh_token = ? WHERE platform = ? AND access_token = ?'
+		)
+			.bind(
+				await encryptToken(key, plain.access_token),
+				plain.refresh_token === null ? null : await encryptToken(key, plain.refresh_token),
+				platform,
+				row.access_token
+			)
+			.run();
+	}
+	return plain;
 }
 
+/** 入れる（トークンは暗号化してから）。row は平文のまま変えない */
 export async function saveAccount(
-	db: D1Database,
+	env: AccountStore,
 	row: Omit<AccountRow, 'updated_at'>
 ): Promise<void> {
-	await db
-		.prepare(
-			`INSERT INTO accounts (platform, user_id, username, access_token, refresh_token, expires_at, updated_at)
+	const key = await tokenKey(env);
+	const access = await encryptToken(key, row.access_token);
+	const refresh = row.refresh_token === null ? null : await encryptToken(key, row.refresh_token);
+	await env.DB.prepare(
+		`INSERT INTO accounts (platform, user_id, username, access_token, refresh_token, expires_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(platform) DO UPDATE SET user_id = excluded.user_id, username = excluded.username,
 			   access_token = excluded.access_token, refresh_token = excluded.refresh_token,
 			   expires_at = excluded.expires_at, updated_at = excluded.updated_at`
-		)
-		.bind(
-			row.platform,
-			row.user_id,
-			row.username,
-			row.access_token,
-			row.refresh_token,
-			row.expires_at,
-			Date.now()
-		)
+	)
+		.bind(row.platform, row.user_id, row.username, access, refresh, row.expires_at, Date.now())
 		.run();
 }
 

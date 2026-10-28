@@ -8,6 +8,7 @@
 import { Hono } from 'hono';
 import type { Env } from './env';
 import { bearerToken, tokenMatches } from './auth';
+import { tokenKeyError } from './crypto';
 import { homePage, privacyPage, resultPage, termsPage } from './pages';
 import { pkceChallenge, randomToken } from './oauth';
 import {
@@ -92,6 +93,9 @@ app.get('/connect/:platform', async (c) => {
 	if (!publisher) return c.html(resultPage(false, `${platform} にはまだ対応していません。`), 404);
 	const missing = publisher.missingConfig(c.env);
 	if (missing) return c.html(resultPage(false, missing), 500);
+	// トークンを入れる鍵が無ければ、SNS の許可画面へ送る前に止める（戻ってきてから失敗させない）
+	const keyErr = tokenKeyError(c.env);
+	if (keyErr) return c.html(resultPage(false, keyErr), 500);
 	const state = randomToken(24);
 	const verifier = randomToken(48);
 	await putState(c.env.DB, state, publisher.platform, verifier);
@@ -117,7 +121,7 @@ app.get('/connect/:platform/callback', async (c) => {
 		return c.html(resultPage(false, '接続の手続きが古くなっています。やり直してください。'), 400);
 	try {
 		const account = await publisher.exchangeCode(c.env, code, saved.verifier);
-		await saveAccount(c.env.DB, account);
+		await saveAccount(c.env, account);
 		return c.html(resultPage(true, `${platform} の @${account.username} としてつながりました。`));
 	} catch (e) {
 		return c.html(resultPage(false, (e as Error).message), 502);
@@ -129,6 +133,9 @@ const api = new Hono<{ Bindings: Env }>();
 api.use('*', async (c, next) => {
 	if (!tokenMatches(bearerToken(c.req.raw), c.env.HUB_TOKEN))
 		return c.json({ error: '合言葉が違います' }, 401);
+	// TOKEN_KEY（D1 のトークンを暗号化する鍵）が無い・形が違うときは、最初の呼び出し（アプリの /api/status）ではっきり分かるように止める
+	const keyErr = tokenKeyError(c.env);
+	if (keyErr) return c.json({ error: keyErr }, 500);
 	await next();
 });
 
@@ -264,7 +271,7 @@ api.delete('/accounts/:platform', async (c) => {
 // TikTok の投稿者の情報（画面で公開範囲などを選ばせるために、投稿の前に出す決まり）
 let creatorCache: { user: string; at: number; info: unknown } | null = null;
 api.get('/tiktok/creator', async (c) => {
-	const stored = await getAccount(c.env.DB, 'tiktok');
+	const stored = await getAccount(c.env, 'tiktok');
 	if (!stored) return c.json({ error: 'TikTok がつながっていません' }, 400);
 	// TikTok の creator_info は 1 分 20 回まで。同じ isolate の間は 2 分覚えて、読みすぎない
 	if (
@@ -274,7 +281,8 @@ api.get('/tiktok/creator', async (c) => {
 	)
 		return c.json(creatorCache.info);
 	const account = await tiktokPublisher.freshAccount(c.env, stored);
-	if (account.access_token !== stored.access_token) await saveAccount(c.env.DB, account);
+	// getAccount は復号した平文を返すので、ここは平文どうしの比べ。入れるときに saveAccount が暗号化する
+	if (account.access_token !== stored.access_token) await saveAccount(c.env, account);
 	const info = await tiktokCreatorInfo(c.env, account.access_token);
 	creatorCache = { user: stored.user_id, at: Date.now(), info };
 	return c.json(info);

@@ -7,6 +7,7 @@
 - `src/platforms/` … 投稿先ごとの実装（`x.ts`、`meta.ts`（Threads・Instagram・Facebook）、`tiktok.ts`）
 - `src/scheduler.ts` … 予約の実行と動画の掃除
 - `src/db.ts` … D1 の読み書き。`migrations/` に表の定義
+- `src/crypto.ts` … D1 に入れる SNS のトークンの暗号化（AES-256-GCM。鍵は secret の `TOKEN_KEY`）
 - `../shared/publish.ts` … アプリと共有する型と規則
 
 ## 初回の準備（Cloudflare 側）
@@ -18,6 +19,7 @@ npx wrangler d1 create hub                  # 出てきた database_id を wrang
 npx wrangler r2 bucket create yasashii-hub-media
 npm run db:remote                           # 表を作る
 npx wrangler secret put HUB_TOKEN           # アプリとの合言葉（長い乱数）
+openssl rand -base64 32 | npx wrangler secret put TOKEN_KEY   # SNS のトークンを暗号化する鍵（下の「SNS のトークンの守り」）
 npx wrangler secret put X_CLIENT_ID         # X の Developer Console → アプリ → Keys and tokens → OAuth 2.0 Client ID
 npx wrangler secret put X_CLIENT_SECRET
 npm run deploy                              # https://yasashii-hub.<account>.workers.dev
@@ -29,10 +31,19 @@ X の Developer Console では Callback URL に `<PUBLIC_URL>/connect/x/callback
 ## ローカルで動かす
 
 ```bash
-cp .dev.vars.example .dev.vars   # HUB_TOKEN などを書く
+cp .dev.vars.example .dev.vars   # HUB_TOKEN・TOKEN_KEY（openssl rand -base64 32。本番とは別の値でよい）などを書く
 npm run db:local
 npm run dev                      # http://localhost:8787
 ```
+
+## SNS のトークンの守り（TOKEN_KEY）
+
+X・Threads・Instagram・Facebook・TikTok のトークン（`accounts` の `access_token` / `refresh_token`）は、Worker の中で暗号化してから D1 に入れる（`src/crypto.ts`。AES-256-GCM、行ごとに別の IV。D1 の中では `enc1:` で始まる）。D1 の書き出し・バックアップ・ダッシュボードから読まれても、鍵が無ければトークンは読めない。Cloudflare のアカウントごと取られたときは守れない（鍵も同じ場所にあるので）。
+
+- **鍵を置くとき**: `openssl rand -base64 32 | npx wrangler secret put TOKEN_KEY`。控えは要らない（Cloudflare が持つ。無くしても下のとおりつなぎ直せばよい）
+- **鍵が無い・形が違うとき**: 接続ページと API（アプリの設定の「投稿ハブ」の様子）が「TOKEN_KEY（SNS のトークンを暗号化する鍵）がありません…」で止まる。置いてから使う
+- **前から平文で入っている行があるとき**（この仕組みより前につないだアカウント）: 次にそのアカウントで投稿・トークン更新をしたとき、そのまま使って暗号化して書き戻す。表の形は変えないので migration は要らない。どこまで直ったかは `npx wrangler d1 execute hub --remote --command "SELECT platform, substr(access_token, 1, 5) AS head FROM accounts"` で見る（`enc1:` なら直っている）
+- **鍵を無くした・変えたとき**: 前の鍵で入れたトークンは復号できないので、投稿が「SNS のトークンを復号できません…つなぎ直してください」で止まる。アプリの設定の「投稿ハブ」から、つないでいた SNS をつなぎ直すだけ（新しい鍵で入る）
 
 ## API（すべて `Authorization: Bearer <HUB_TOKEN>`）
 
