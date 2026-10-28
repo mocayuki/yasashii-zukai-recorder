@@ -3,7 +3,7 @@
 #   npx wrangler d1 create hub    … D1 を作り、下の database_id を書き換える
 #   npx wrangler r2 bucket create yasashii-hub-media
 #   npm run db:remote             … 表を作る
-#   npx wrangler secret put HUB_TOKEN / X_CLIENT_ID / X_CLIENT_SECRET
+#   npx wrangler secret put HUB_TOKEN / TOKEN_KEY / X_CLIENT_ID / X_CLIENT_SECRET
 #   npm run deploy
 name = "yasashii-hub"
 main = "src/index.ts"

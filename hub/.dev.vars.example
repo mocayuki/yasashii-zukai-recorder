@@ -1,5 +1,7 @@
 # ローカルで動かすときの秘密。実際の値は .dev.vars（git には入れない）に書く
 HUB_TOKEN=change-me
+# D1 に入れる SNS のトークンを暗号化する鍵（32 バイトを base64）。`openssl rand -base64 32` で作る。本番とは別の値でよい
+TOKEN_KEY=
 X_CLIENT_ID=
 X_CLIENT_SECRET=
 THREADS_APP_ID=

@@ -6,6 +6,12 @@ export interface Env {
 	SELF?: Fetcher;
 	/** アプリとハブの合言葉（wrangler secret put HUB_TOKEN）。アプリの設定にも同じ値を入れる */
 	HUB_TOKEN: string;
+	/**
+	 * D1 に入れる SNS のトークンを暗号化する鍵（`openssl rand -base64 32 | npx wrangler secret put TOKEN_KEY`）。
+	 * 32 バイトを base64 にしたもの。無い・形が違うと、接続と API が「TOKEN_KEY が…」で止まる（crypto.ts）。
+	 * 無くしたら復号できないので、各 SNS をつなぎ直す
+	 */
+	TOKEN_KEY: string;
 	/** 配置したあとの公開 URL（末尾 / なし） */
 	PUBLIC_URL: string;
 	X_CLIENT_ID?: string;

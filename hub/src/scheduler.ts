@@ -65,10 +65,11 @@ export async function stepJob(
 		if (!publisher) throw new Error(`${job.platform} にはまだ対応していません`);
 		const missing = publisher.missingConfig(env);
 		if (missing) throw new Error(missing);
-		const stored = await getAccount(env.DB, job.platform);
+		const stored = await getAccount(env, job.platform);
 		if (!stored) throw new Error(`${job.platform} がつながっていません。ハブで接続してください`);
 		const account = await publisher.freshAccount(env, stored);
-		if (account.access_token !== stored.access_token) await saveAccount(env.DB, account);
+		// getAccount は復号した平文を返すので、ここは平文どうしの比べ。入れるときに saveAccount が暗号化する
+		if (account.access_token !== stored.access_token) await saveAccount(env, account);
 		const media = await getMedia(env.DB, job.mediaKey);
 		if (!media) throw new Error('動画がハブに残っていません（上げ直してください）');
 		const url = await publisher.post(
