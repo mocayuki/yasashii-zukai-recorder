@@ -7,6 +7,9 @@
 	"author": "moca",
 	"type": "module",
 	"main": "dist-electron/main.cjs",
+	"engines": {
+		"node": ">=22.12.0"
+	},
 	"scripts": {
 		"dev": "concurrently -k -n web,main,app -c blue,magenta,green \"vite dev --port 5173 --strictPort\" \"node scripts/build-electron.mjs --watch\" \"wait-on -l http://localhost:5173 dist-electron/main.cjs dist-electron/preload.cjs && ELECTRON_DEV_URL=http://localhost:5173 electron .\"",
 		"build": "vite build && node scripts/build-electron.mjs",
