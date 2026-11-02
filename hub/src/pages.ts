@@ -70,8 +70,25 @@ export const privacyPage = () =>
 <p>SNS 側の連携解除により、当該アカウントに関するトークンは削除されます。その他の削除依頼は上記の連絡先までご連絡ください。</p>`
 	);
 
+const HTML_ESCAPES: Record<string, string> = {
+	'&': '&amp;',
+	'<': '&lt;',
+	'>': '&gt;',
+	'"': '&quot;',
+	"'": '&#39;'
+};
+
+/** 文字を、HTML の中でただの文字として出るように置きかえる */
+function escapeHtml(s: string): string {
+	return s.replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
+}
+
+/**
+ * 接続の結果の画面。message はただの文字として出す（HTML は入れられない）。
+ * 道の値（platform）・?error=・SNS から戻った名前やエラーの文がそのまま入るので、ここでエスケープする（K185）
+ */
 export const resultPage = (ok: boolean, message: string) =>
 	layout(
 		ok ? '接続しました' : '接続できませんでした',
-		`<h1>${ok ? '接続しました' : '接続できませんでした'}</h1><p>${message}</p><p class="muted">このタブは閉じて、アプリに戻ってください。</p>`
+		`<h1>${ok ? '接続しました' : '接続できませんでした'}</h1><p>${escapeHtml(message)}</p><p class="muted">このタブは閉じて、アプリに戻ってください。</p>`
 	);
