@@ -4,7 +4,7 @@
 	 * サムネの欄は投稿の画面の左（ThumbnailCard）にあり、投稿の直前に onCapture で写す。
 	 * 予約の日時は画面で共通に決める（publishAtIso）。縦の動画は YouTube 側で自動的にショート扱いになる
 	 */
-	import type { Recording, Note, PostRecord, ExportInfo } from '$shared/types';
+	import type { Recording, Note, PostRecord, ExportInfo, YouTubeStatus } from '$shared/types';
 	import { parseTags, TEXT_LIMITS } from '$shared/publish';
 	import { api } from '$lib/api';
 	import { toast } from '$lib/stores/toast.svelte';
@@ -38,11 +38,7 @@
 	} = $props();
 
 	const portrait = $derived(note?.orientation === 'portrait');
-	let status = $state<{
-		connected: boolean;
-		channelTitle: string | null;
-		hasClient: boolean;
-	} | null>(null);
+	let status = $state<YouTubeStatus | null>(null);
 	let uploading = $state(false);
 	let progress = $state<{ phase: string; ratio: number } | null>(null);
 	let result = $state<{ url: string; thumbnailWarning?: string } | null>(null);
@@ -63,7 +59,10 @@
 		void api()
 			.publish.youtubeStatus()
 			.then((s) => (status = s))
-			.catch(() => (status = { connected: false, channelTitle: null, hasClient: false }));
+			.catch(
+				() =>
+					(status = { connected: false, channelTitle: null, hasClient: false, canDelete: false })
+			);
 		return api().publish.onProgress((p) => {
 			if (p.id === recording.id) progress = { phase: p.phase, ratio: p.ratio };
 		});

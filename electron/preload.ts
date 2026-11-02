@@ -15,7 +15,9 @@ const api: Api = {
 		get: () => ipcRenderer.invoke('settings:get'),
 		save: (patch) => ipcRenderer.invoke('settings:save', patch),
 		chooseLibraryFolder: () => ipcRenderer.invoke('settings:chooseLibraryFolder'),
-		openLibraryFolder: () => ipcRenderer.invoke('settings:openLibraryFolder')
+		openLibraryFolder: () => ipcRenderer.invoke('settings:openLibraryFolder'),
+		secrets: () => ipcRenderer.invoke('settings:secrets'),
+		setSecret: (name, value) => ipcRenderer.invoke('settings:setSecret', name, value)
 	},
 	bgm: {
 		list: () => ipcRenderer.invoke('bgm:list'),
@@ -142,6 +144,7 @@ const api: Api = {
 	},
 	app: {
 		version: () => ipcRenderer.invoke('app:version'),
+		startupNotices: () => ipcRenderer.invoke('app:startupNotices'),
 		setFullScreen: (flag) => ipcRenderer.invoke('app:setFullScreen', flag),
 		setBackgroundColor: (color) => ipcRenderer.invoke('app:setBackgroundColor', color),
 		setWindowMode: (mode) => ipcRenderer.invoke('app:setWindowMode', mode),

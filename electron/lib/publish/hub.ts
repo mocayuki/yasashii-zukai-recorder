@@ -14,7 +14,7 @@ import type {
 } from '../../../shared/publish';
 import { app } from 'electron';
 import path from 'node:path';
-import { loadSettings } from '../settings';
+import { getSecret, loadSettings } from '../settings';
 import { probeDurationMs, runFfmpeg } from '../ffmpeg';
 import { uploadMedia } from './upload';
 import { beginJob, isCanceled, throwIfCanceled } from './cancel';
@@ -27,9 +27,10 @@ export interface HubStatus {
 
 async function config(): Promise<{ url: string; token: string }> {
 	const s = await loadSettings();
-	if (!s.hubUrl || !s.hubToken)
-		throw new Error('設定の「投稿ハブ」に URL と合言葉を入れてください');
-	return { url: s.hubUrl.replace(/\/+$/, ''), token: s.hubToken };
+	// 合言葉はキーチェーンから（settings.json には無い）
+	const token = getSecret('hubToken');
+	if (!s.hubUrl || !token) throw new Error('設定の「投稿ハブ」に URL と合言葉を入れてください');
+	return { url: s.hubUrl.replace(/\/+$/, ''), token };
 }
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {

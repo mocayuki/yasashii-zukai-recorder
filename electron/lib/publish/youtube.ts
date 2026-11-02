@@ -1,9 +1,9 @@
 /**
  * YouTube への接続（OAuth）とアップロード（Data API v3）。
  *
- * - 接続: 「デスクトップ アプリ」のクライアント ID / シークレット（設定に保存）で、この Mac の中だけで動く
+ * - 接続: 「デスクトップ アプリ」のクライアント ID（設定）/ シークレット（キーチェーン）で、この Mac の中だけで動く
  *   ループバック（http://127.0.0.1:ポート）へ戻ってくる OAuth 2.0（PKCE 付き）。ブラウザーで Google にログインして許可する。
- *   トークンは settings.json にだけ保存する
+ *   トークンは Mac のキーチェーンにだけ置く（settings.json には書かない。画面にも渡さない）
  * - アップロード: 再開可能アップロード（resumable）。8MB ずつ送って進み具合を出す。
  *   予約公開は privacyStatus=private + status.publishAt。サムネイルは thumbnails.set（電話確認済みのチャンネルが必要）
  * - 1 日の割り当て（10,000 単位）のうち、アップロード 1 本が 1,600 単位。1 日 6 本ほどが上限
@@ -19,8 +19,9 @@ import type {
 	YouTubeUploadRequest,
 	YouTubeUploadResult
 } from '../../../shared/publish';
-import { tidyDescription } from '../../../shared/publish';
-import { loadSettings, saveSettings } from '../settings';
+import { tidyDescription, youtubeCanDelete } from '../../../shared/publish';
+import type { YouTubeStatus } from '../../../shared/types';
+import { getSecret, getYouTubeAuth, loadSettings, setYouTubeAuth } from '../settings';
 import { findRecording } from '../library';
 import { getTranscript } from '../transcripts';
 import { buildSubtitles } from '../subtitles';
@@ -37,11 +38,11 @@ function base64url(buf: Buffer): string {
 	return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-/** ブラウザーで Google にログインして許可してもらい、トークンを設定に保存する。チャンネル名を返す */
+/** ブラウザーで Google にログインして許可してもらい、トークンをキーチェーンに置く。チャンネル名を返す */
 export async function connectYouTube(): Promise<string> {
 	const s = await loadSettings();
 	const clientId = s.youtubeClientId?.trim();
-	const clientSecret = s.youtubeClientSecret?.trim();
+	const clientSecret = getSecret('youtubeClientSecret');
 	if (!clientId || !clientSecret)
 		throw new Error(
 			'Google Cloud の「クライアント ID」と「クライアント シークレット」を設定に入れてください。'
@@ -107,14 +108,13 @@ export async function connectYouTube(): Promise<string> {
 		channelId: channel.id,
 		scope: tok.scope
 	};
-	await saveSettings({ youtubeAuth: auth });
+	await setYouTubeAuth(auth);
 	return channel.title;
 }
 
 export async function disconnectYouTube(): Promise<void> {
-	const s = await loadSettings();
-	const token = s.youtubeAuth?.refreshToken;
-	await saveSettings({ youtubeAuth: null });
+	const token = getYouTubeAuth()?.refreshToken;
+	await setYouTubeAuth(null);
 	if (token) {
 		await fetch(
 			'https://oauth2.googleapis.com/revoke?' + new URLSearchParams({ token }).toString(),
@@ -194,7 +194,7 @@ async function fetchChannel(accessToken: string): Promise<{ id: string; title: s
 /** 有効なアクセストークンを返す（期限が近ければ refresh する） */
 async function accessToken(): Promise<string> {
 	const s = await loadSettings();
-	const auth = s.youtubeAuth;
+	const auth = getYouTubeAuth();
 	if (!auth) throw new Error('YouTube に接続していません。設定で接続してください。');
 	if (Date.now() < auth.expiresAt) return auth.accessToken;
 	const res = await fetch('https://oauth2.googleapis.com/token', {
@@ -202,14 +202,14 @@ async function accessToken(): Promise<string> {
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
 		body: new URLSearchParams({
 			client_id: s.youtubeClientId ?? '',
-			client_secret: s.youtubeClientSecret ?? '',
+			client_secret: getSecret('youtubeClientSecret') ?? '',
 			refresh_token: auth.refreshToken,
 			grant_type: 'refresh_token'
 		}).toString()
 	});
 	const tok = (await res.json()) as { access_token?: string; expires_in?: number; error?: string };
 	if (!res.ok || !tok.access_token) {
-		if (tok.error === 'invalid_grant') await saveSettings({ youtubeAuth: null });
+		if (tok.error === 'invalid_grant') await setYouTubeAuth(null);
 		throw new Error('YouTube の接続が切れています。設定でもう一度接続してください。');
 	}
 	const next: YouTubeAuth = {
@@ -217,20 +217,19 @@ async function accessToken(): Promise<string> {
 		accessToken: tok.access_token,
 		expiresAt: Date.now() + ((tok.expires_in ?? 3600) - 60) * 1000
 	};
-	await saveSettings({ youtubeAuth: next });
+	await setYouTubeAuth(next);
 	return next.accessToken;
 }
 
-export async function youtubeStatus(): Promise<{
-	connected: boolean;
-	channelTitle: string | null;
-	hasClient: boolean;
-}> {
+/** 画面に見せる接続の様子。トークンは渡さない */
+export async function youtubeStatus(): Promise<YouTubeStatus> {
 	const s = await loadSettings();
+	const auth = getYouTubeAuth();
 	return {
-		connected: !!s.youtubeAuth,
-		channelTitle: s.youtubeAuth?.channelTitle ?? null,
-		hasClient: !!(s.youtubeClientId?.trim() && s.youtubeClientSecret?.trim())
+		connected: !!auth,
+		channelTitle: auth?.channelTitle ?? null,
+		hasClient: !!(s.youtubeClientId?.trim() && getSecret('youtubeClientSecret')),
+		canDelete: youtubeCanDelete(auth)
 	};
 }
 
@@ -339,7 +338,7 @@ export async function uploadToYouTube(
 					rec,
 					transcript,
 					langs,
-					s.openaiApiKey,
+					getSecret('openaiApiKey'),
 					parseTerms(s.transcriptTerms),
 					() => {}
 				);

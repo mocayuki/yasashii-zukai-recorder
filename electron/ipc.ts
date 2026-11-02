@@ -81,7 +81,15 @@ import {
 	saveRecording
 } from './lib/library';
 import { appendRecording, beginRecording, finishRecording } from './lib/recorder';
-import { loadSettings, saveSettings } from './lib/settings';
+import {
+	getSecret,
+	loadSettings,
+	saveSettings,
+	secretStatus,
+	setSecret,
+	takeStartupNotices
+} from './lib/settings';
+import { isSecretName } from './lib/secrets';
 import { storageInfo } from './lib/storage';
 
 /**
@@ -90,12 +98,19 @@ import { storageInfo } from './lib/storage';
  */
 export function registerIpc(getWindow: () => BrowserWindow | null): void {
 	// ---- 設定 ----
+	// 鍵・トークンは設定に入っていない（キーチェーン）。画面には有る／無いだけを返し、中身は main 側でだけ使う
 	ipcMain.handle('settings:get', () => loadSettings());
 	ipcMain.handle('settings:save', (_e, patch: Partial<Settings>) => {
 		// 画面から来る値なので、保存先だけはここでは変えさせない（専用の処理を通す）
 		const { libraryPath: _ignored, ...rest } = patch ?? {};
 		void _ignored;
 		return saveSettings(rest);
+	});
+	ipcMain.handle('settings:secrets', () => secretStatus());
+	ipcMain.handle('settings:setSecret', (_e, name: unknown, value: unknown) => {
+		if (!isSecretName(name)) throw new Error('この鍵は扱えません。');
+		if (value !== null && typeof value !== 'string') throw new Error('鍵の値が正しくありません。');
+		return setSecret(name, value);
 	});
 
 	ipcMain.handle('settings:chooseLibraryFolder', async () => {
@@ -337,6 +352,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 	);
 
 	ipcMain.handle('app:version', () => app.getVersion());
+	ipcMain.handle('app:startupNotices', () => takeStartupNotices());
 	// ---- テロップ（文字起こし） ----
 	ipcMain.handle('transcripts:get', (_e, recordingId: string) => getTranscript(recordingId));
 	ipcMain.handle('transcripts:save', (_e, t: Transcript) => saveTranscript(t));
@@ -344,7 +360,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 		const rec = await findRecording(recordingId);
 		if (!rec) throw new Error('収録が見つかりません。');
 		const s = await loadSettings();
-		const key = s.openaiApiKey;
+		const key = getSecret('openaiApiKey');
 		if (!key) throw new Error('OpenAI の API キーが設定されていません。設定で入力してください。');
 		const send = (p: TranscribeProgress) =>
 			getWindow()?.webContents.send('transcripts:progress', p);
@@ -367,7 +383,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 			rec,
 			transcript,
 			langs,
-			s.openaiApiKey,
+			getSecret('openaiApiKey'),
 			parseTerms(s.transcriptTerms),
 			getWindow(),
 			send
@@ -379,11 +395,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 		if (!rec) throw new Error('収録が見つかりません。');
 		if (!Array.isArray(cues) || cues.length === 0) throw new Error('テロップがありません。');
 		const s = await loadSettings();
-		if (!s.openaiApiKey)
-			throw new Error('OpenAI の API キーが設定されていません。設定で入力してください。');
+		const key = getSecret('openaiApiKey');
+		if (!key) throw new Error('OpenAI の API キーが設定されていません。設定で入力してください。');
 		const note = (await listNotes()).find((n) => n.id === rec.noteId);
 		const context = note ? [note.title, ...plainText([note.root]).split('\n')] : [];
-		return proofreadCues(s.openaiApiKey, cues, context, parseTerms(s.transcriptTerms));
+		return proofreadCues(key, cues, context, parseTerms(s.transcriptTerms));
 	});
 
 	// ---- 投稿（YouTube） ----
