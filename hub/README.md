@@ -50,6 +50,7 @@ X・Threads・Instagram・Facebook・TikTok のトークン（`accounts` の `ac
 | 方法   | 道                       | 何をする                                                                                         |
 | ------ | ------------------------ | ------------------------------------------------------------------------------------------------ |
 | GET    | /api/status              | 接続の様子                                                                                       |
+| POST   | /api/connect/:platform   | SNS の接続を始める → `{ url }`（許可画面。使い捨ての state 入りで 10 分で無効）                  |
 | PUT    | /api/media               | 動画を上げる（本体そのまま、Content-Length 必須）→ `{ key, url }`                                |
 | POST   | /api/jobs                | `{ platform, mediaKey, text, scheduledAt?, orientation }` → 仕事。scheduledAt が無ければすぐ投稿 |
 | GET    | /api/jobs, /api/jobs/:id | 様子を見る                                                                                       |
@@ -58,7 +59,7 @@ X・Threads・Instagram・Facebook・TikTok のトークン（`accounts` の `ac
 | DELETE | /api/jobs/:id            | 予約を取り消す                                                                                   |
 | DELETE | /api/accounts/:platform  | 接続を切る                                                                                       |
 
-接続はブラウザーで `<PUBLIC_URL>/connect/x?t=<HUB_TOKEN>` を開く（アプリの設定から開ける）。
+接続はアプリの設定の「ブラウザーで接続」から。アプリが `POST /api/connect/:platform` でもらった SNS の許可画面をブラウザーで開く。合言葉は URL に入れない（ブラウザーの履歴やログに残るので。2026-11-02 までは `/connect/x?t=<HUB_TOKEN>` を開いていた。いまその道は「アプリを新しくしてください」と返すだけ）。
 
 ## TikTok
 
