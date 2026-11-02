@@ -13,7 +13,7 @@ import {
 } from '../../../shared/publish';
 import { findRecording } from '../library';
 import { cuesForExport } from '../../../shared/cues';
-import { loadSettings } from '../settings';
+import { getSecret } from '../settings';
 import { getTranscript } from '../transcripts';
 
 /**
@@ -29,8 +29,8 @@ export async function composePosts(
 	recordingId: string,
 	platforms: Platform[]
 ): Promise<ComposeResult> {
-	const settings = await loadSettings();
-	if (!settings.openaiApiKey) throw new Error('設定に OpenAI の API キーを入れてください');
+	const apiKey = getSecret('openaiApiKey');
+	if (!apiKey) throw new Error('設定に OpenAI の API キーを入れてください');
 	const rec = await findRecording(recordingId);
 	if (!rec) throw new Error('収録が見つかりません');
 	const transcript = await getTranscript(recordingId).catch(() => null);
@@ -48,21 +48,21 @@ export async function composePosts(
 	const wantNote = all.includes('note');
 	const wanted = all.filter((p) => p !== 'note');
 	const plain = cues.map((c) => c.text).join('\n');
-	const notePromise = wantNote ? composeNote(settings.openaiApiKey, rec.title, plain) : null;
+	const notePromise = wantNote ? composeNote(apiKey, rec.title, plain) : null;
 	if (wanted.length === 0) {
 		const note = await notePromise!;
 		return note ? { note } : {};
 	}
 
 	const user = `題: ${rec.title}\n\n書き起こし:\n${clipTranscript(spoken)}`;
-	let parsed = await askJson(settings.openaiApiKey, MODEL, composePrompt(wanted), user);
+	let parsed = await askJson(apiKey, MODEL, composePrompt(wanted), user);
 	// YouTube の説明に箇条書き・ハッシュタグ・タグ・チャプターが揃っていなければ、強いモデルで 1 回作り直す
 	if (wanted.includes('youtube') && !youtubeComplete(parsed.youtube, totalMs)) {
+		// 本文はログに出さない（長さと数だけ）
 		console.log(
-			'[compose] YouTube の中身が足りないので作り直す:',
-			JSON.stringify(parsed.youtube).slice(0, 200)
+			`[compose] YouTube の中身が足りないので作り直す（${describeYoutube(parsed.youtube)}）`
 		);
-		const again = await askJson(settings.openaiApiKey, RETRY_MODEL, composePrompt(wanted), user);
+		const again = await askJson(apiKey, RETRY_MODEL, composePrompt(wanted), user);
 		if (youtubeComplete(again.youtube, totalMs) || !parsed.youtube)
 			parsed = { ...parsed, ...again };
 	}
@@ -142,6 +142,14 @@ export async function composePosts(
 		if (note) out.note = note;
 	}
 	return out;
+}
+
+/** ログ用。AI の返事の中身は書かず、長さと数だけ */
+export function describeYoutube(v: unknown): string {
+	const y = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+	const count = (x: unknown) => (Array.isArray(x) ? x.length : 0);
+	const desc = typeof y.description === 'string' ? y.description.length : 0;
+	return `説明 ${desc} 字、ハッシュタグ ${count(y.hashtags)} 個、タグ ${count(y.tags)} 個、チャプター ${count(y.chapters)} 個`;
 }
 
 async function askJson(

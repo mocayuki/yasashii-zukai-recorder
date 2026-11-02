@@ -30,6 +30,13 @@
 		if (!inApp) return;
 		void library.load();
 		void storage.refresh();
+		// 開いたときに 1 回だけ知らせること（鍵をキーチェーンに移した など）
+		void api()
+			.app.startupNotices()
+			.then((list) => {
+				for (const text of list) toast.show(text);
+			})
+			.catch(() => {});
 
 		// 画面を隠す・閉じる前に、待っている自動保存を書き切る
 		const flush = () => void library.flush();

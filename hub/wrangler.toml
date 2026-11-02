@@ -9,6 +9,10 @@ name = "yasashii-hub"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 compatibility_flags = ["nodejs_compat"]
+# 自分のドメインは無いので、Cloudflare の住所（workers.dev）で開く。
+# 版ごとの試しの住所（preview URL。<版>-yasashii-hub.….workers.dev）は使わないので閉じる（2026-11-02）
+workers_dev = true
+preview_urls = false
 
 [vars]
 # 配置したあとの公開 URL（末尾に / を付けない）。OAuth の戻り先や、SNS に渡す動画の URL に使う

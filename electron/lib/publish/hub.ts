@@ -14,7 +14,7 @@ import type {
 } from '../../../shared/publish';
 import { app } from 'electron';
 import path from 'node:path';
-import { loadSettings } from '../settings';
+import { getSecret, loadSettings } from '../settings';
 import { probeDurationMs, runFfmpeg } from '../ffmpeg';
 import { uploadMedia } from './upload';
 import { beginJob, isCanceled, throwIfCanceled } from './cancel';
@@ -27,9 +27,10 @@ export interface HubStatus {
 
 async function config(): Promise<{ url: string; token: string }> {
 	const s = await loadSettings();
-	if (!s.hubUrl || !s.hubToken)
-		throw new Error('設定の「投稿ハブ」に URL と合言葉を入れてください');
-	return { url: s.hubUrl.replace(/\/+$/, ''), token: s.hubToken };
+	// 合言葉はキーチェーンから（settings.json には無い）
+	const token = getSecret('hubToken');
+	if (!s.hubUrl || !token) throw new Error('設定の「投稿ハブ」に URL と合言葉を入れてください');
+	return { url: s.hubUrl.replace(/\/+$/, ''), token };
 }
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -72,10 +73,25 @@ export async function hubStatus(): Promise<HubStatus | { ok: false; error: strin
 	}
 }
 
-/** ブラウザーでハブの接続ページを開く（ハブが SNS の許可画面へ送る） */
+/**
+ * SNS の許可画面をブラウザーで開く。合言葉は URL に入れない（ブラウザーの履歴やログに残るので）。
+ * ハブに Bearer で頼んで、許可画面の URL（使い捨ての state 入り。10 分で無効）をもらって開く
+ */
 export async function hubConnect(platform: HubPlatform): Promise<void> {
-	const { url, token } = await config();
-	await shell.openExternal(`${url}/connect/${platform}?t=${encodeURIComponent(token)}`);
+	let res: { url?: unknown };
+	try {
+		res = await call<{ url?: unknown }>(`/api/connect/${encodeURIComponent(platform)}`, {
+			method: 'POST'
+		});
+	} catch (err) {
+		// ハブが古いまま（この API が無い）のとき
+		if (/^投稿ハブ: (404 Not Found|HTTP 404)$/.test((err as Error).message))
+			throw new Error('投稿ハブが古いままです。hub/ で npm run deploy をして新しくしてください');
+		throw err;
+	}
+	if (typeof res?.url !== 'string' || !/^https:\/\//.test(res.url))
+		throw new Error('投稿ハブから SNS の許可画面の URL が返りませんでした');
+	await shell.openExternal(res.url);
 }
 
 export async function hubDisconnect(platform: HubPlatform): Promise<void> {

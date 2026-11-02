@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-	import { PLATFORMS, youtubeCanDelete, type HubPlatform } from '$shared/publish';
+	import { PLATFORMS, type HubPlatform } from '$shared/publish';
+	import type { SecretName, YouTubeStatus } from '$shared/types';
 	import { library } from '$lib/stores/library.svelte';
 	import { settings } from '$lib/stores/settings.svelte';
 	import { SUBTITLE_LANGS } from '$shared/subtitles';
@@ -70,9 +71,35 @@
 		hub = null;
 		hub = await api().publish.hubStatus();
 	}
-	async function saveHub(patch: { hubUrl?: string | null; hubToken?: string | null }) {
+	async function saveHub(patch: { hubUrl?: string | null }) {
 		await settings.save(patch);
 		await loadHub();
+	}
+	// 鍵・合言葉はこの Mac のキーチェーンへ（settings.json には書かない。画面には有る／無いだけが来る）
+	const SECRET_WORDS: Record<SecretName, string> = {
+		openaiApiKey: 'API キー',
+		youtubeClientSecret: 'クライアント シークレット',
+		hubToken: '合言葉'
+	};
+	async function saveSecret(name: SecretName, value: string | null) {
+		const v = value?.trim() || null;
+		try {
+			await settings.setSecret(name, v);
+			toast.show(v ? `${SECRET_WORDS[name]}を保存しました` : `${SECRET_WORDS[name]}を消しました`);
+			if (name === 'hubToken') await loadHub();
+			if (name === 'youtubeClientSecret') await loadYt();
+		} catch (err) {
+			toast.error((err as Error).message);
+		}
+	}
+	/** YouTube の接続の様子（トークンは画面に来ない。有る／無いとチャンネル名だけ） */
+	let yt = $state<YouTubeStatus | null>(null);
+	async function loadYt() {
+		try {
+			yt = await api().publish.youtubeStatus();
+		} catch {
+			yt = null;
+		}
 	}
 	async function hubConnect(platform: HubPlatform) {
 		try {
@@ -92,13 +119,16 @@
 		}
 	}
 	$effect(() => {
-		if (open) void loadHub();
+		if (open) {
+			void loadHub();
+			void loadYt();
+		}
 	});
 	async function ytConnect() {
 		ytBusy = true;
 		try {
 			const name = await api().publish.youtubeConnect();
-			await settings.load();
+			await loadYt();
 			toast.show(`YouTube に接続しました: ${name}`);
 		} catch (err) {
 			toast.error((err as Error).message);
@@ -108,7 +138,7 @@
 	}
 	async function ytDisconnect() {
 		await api().publish.youtubeDisconnect();
-		await settings.load();
+		await loadYt();
 		toast.show('YouTube との接続を切りました');
 	}
 	async function toggleLang(code: string, on: boolean) {
@@ -116,15 +146,6 @@
 		const next = on ? [...new Set([...cur, code])] : cur.filter((c) => c !== code);
 		await settings.save({ subtitleLanguages: next });
 	}
-	async function saveApiKey(v: string) {
-		try {
-			await settings.save({ openaiApiKey: v.trim() || null });
-			toast.show(v.trim() ? 'API キーを保存しました' : 'API キーを消しました');
-		} catch (err) {
-			toast.error((err as Error).message);
-		}
-	}
-
 	async function importLegacy() {
 		busy = true;
 		try {
@@ -143,6 +164,39 @@
 		}
 	}
 </script>
+
+<!--
+	鍵・合言葉の欄。中身は画面に来ないので、入れたあとは「保存ずみ」とだけ見せる（値は映さない）。
+	変えるときはもう一度入れる。消すのは「消す」ボタン
+-->
+{#snippet secretField(name: SecretName, label: string, placeholder: string)}
+	{@const saved = !!settings.secrets?.[name]}
+	<label class="dialog__field">
+		<span>{label}</span>
+		<input
+			class="input"
+			type="password"
+			autocomplete="off"
+			placeholder={saved ? '保存ずみ（変えるときだけ入れる）' : placeholder}
+			value=""
+			onchange={(e) => {
+				const v = e.currentTarget.value;
+				e.currentTarget.value = '';
+				if (v.trim()) void saveSecret(name, v);
+			}}
+		/>
+	</label>
+	<div class="dialog__row">
+		<span class="muted">
+			{saved ? 'この Mac のキーチェーンに保存されています。' : 'まだ設定されていません。'}
+		</span>
+		{#if saved}
+			<button type="button" class="btn btn--sm" onclick={() => void saveSecret(name, null)}
+				>消す</button
+			>
+		{/if}
+	</div>
+{/snippet}
 
 <dialog bind:this={dialog} class="dialog" onclose={onClose} aria-labelledby="settings-heading">
 	<div class="dialog__inner">
@@ -240,22 +294,9 @@
 			<h3 class="dialog__h">テロップ（文字起こし）</h3>
 			<p class="muted">
 				編集画面の「テロップを作る」は OpenAI の文字起こし（whisper-1）を使います。API キーはこの
-				Mac の設定ファイルにだけ保存し、ほかへは送りません。料金は 1 時間の収録で 1 ドルほどです。
+				Mac のキーチェーンにだけ保存し、ほかへは送りません。料金は 1 時間の収録で 1 ドルほどです。
 			</p>
-			<label class="dialog__field">
-				<span>OpenAI API キー</span>
-				<input
-					class="input"
-					type="password"
-					placeholder="sk-…"
-					autocomplete="off"
-					value={settings.value?.openaiApiKey ?? ''}
-					onchange={(e) => void saveApiKey(e.currentTarget.value)}
-				/>
-			</label>
-			<p class="muted">
-				{settings.value?.openaiApiKey ? 'キーは保存されています。' : 'まだ設定されていません。'}
-			</p>
+			{@render secretField('openaiApiKey', 'OpenAI API キー', 'sk-…')}
 		</section>
 
 		<section class="dialog__section">
@@ -293,7 +334,7 @@
 			<p class="muted">
 				Google Cloud で作った「デスクトップ アプリ」の OAuth クライアントの値を入れて、「YouTube
 				に接続」を押します。ブラウザーで Google にログインして許可すると、この Mac
-				の設定ファイルにだけトークンを保存します。
+				のキーチェーンにだけトークンを保存します。
 			</p>
 			<label class="dialog__field">
 				<span>クライアント ID</span>
@@ -307,29 +348,14 @@
 						void settings.save({ youtubeClientId: e.currentTarget.value.trim() || null })}
 				/>
 			</label>
-			<label class="dialog__field">
-				<span>クライアント シークレット</span>
-				<input
-					class="input"
-					type="password"
-					autocomplete="off"
-					placeholder="GOCSPX-…"
-					value={settings.value?.youtubeClientSecret ?? ''}
-					onchange={(e) =>
-						void settings.save({ youtubeClientSecret: e.currentTarget.value.trim() || null })}
-				/>
-			</label>
+			{@render secretField('youtubeClientSecret', 'クライアント シークレット', 'GOCSPX-…')}
 			<div class="dialog__row">
-				{#if settings.value?.youtubeAuth}
-					<span
-						>接続中: <strong
-							>{settings.value.youtubeAuth.channelTitle || '（チャンネル名なし）'}</strong
-						></span
-					>
+				{#if yt?.connected}
+					<span>接続中: <strong>{yt.channelTitle || '（チャンネル名なし）'}</strong></span>
 					<button type="button" class="btn btn--sm" onclick={() => void ytDisconnect()}
 						>接続を切る</button
 					>
-					{#if !youtubeCanDelete(settings.value.youtubeAuth)}
+					{#if !yt.canDelete}
 						<span class="muted" style="color: var(--alert)"
 							>予約の取り消し（動画の削除）の許可がまだありません。「接続を切る」→「YouTube
 							に接続」でつなぎ直してください</span
@@ -341,7 +367,7 @@
 						class="btn btn--sm btn--yellow"
 						disabled={ytBusy ||
 							!settings.value?.youtubeClientId ||
-							!settings.value?.youtubeClientSecret}
+							!settings.secrets?.youtubeClientSecret}
 						onclick={() => void ytConnect()}
 						>{ytBusy ? 'ブラウザーで許可を待っています…' : 'YouTube に接続'}</button
 					>
@@ -367,16 +393,7 @@
 					onchange={(e) => void saveHub({ hubUrl: e.currentTarget.value.trim() || null })}
 				/>
 			</label>
-			<label class="dialog__field">
-				<span>合言葉（HUB_TOKEN）</span>
-				<input
-					class="input"
-					type="password"
-					autocomplete="off"
-					value={settings.value?.hubToken ?? ''}
-					onchange={(e) => void saveHub({ hubToken: e.currentTarget.value.trim() || null })}
-				/>
-			</label>
+			{@render secretField('hubToken', '合言葉（HUB_TOKEN）', '')}
 			{#if hub === null}
 				<p class="muted">ハブの様子を見ています…</p>
 			{:else if !hub.ok}

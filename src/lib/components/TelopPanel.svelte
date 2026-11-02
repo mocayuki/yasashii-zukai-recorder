@@ -57,7 +57,7 @@
 	let phase = $state<TranscribeProgress['phase'] | null>(null);
 	let saveTimer: number | null = null;
 
-	const hasKey = $derived(!!settings.value?.openaiApiKey);
+	const hasKey = $derived(!!settings.secrets?.openaiApiKey);
 	const activeId = $derived(
 		transcript?.cues.find((c) => currentMs >= c.startMs && currentMs < c.endMs)?.id ?? null
 	);

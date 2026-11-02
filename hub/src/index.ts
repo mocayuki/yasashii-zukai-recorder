@@ -1,16 +1,17 @@
 /**
  * 投稿ハブ（Cloudflare Worker）。
  *   公開ページ: /  /terms  /privacy  /m/:key（SNS に渡す動画）
- *   接続:      /connect/:platform?t=合言葉 → SNS の許可画面 → /connect/:platform/callback
- *   API（Bearer 合言葉）: /api/status, PUT /api/media（100 MB まで）, /api/media/multipart（大きい動画を分けて）, POST /api/jobs, GET /api/jobs, GET /api/jobs/:id, DELETE /api/jobs/:id, DELETE /api/accounts/:platform
+ *   接続:      アプリが POST /api/connect/:platform（Bearer 合言葉）→ 返した SNS の許可画面をブラウザーで開く → /connect/:platform/callback
+ *   API（Bearer 合言葉）: /api/status, POST /api/connect/:platform, PUT /api/media（100 MB まで）, /api/media/multipart（大きい動画を分けて）, POST /api/jobs, GET /api/jobs, GET /api/jobs/:id, DELETE /api/jobs/:id, DELETE /api/accounts/:platform
  *   cron: 30 分ごと（日本時間 12:00〜23:30）に時刻の来た予約を投稿
  */
 import { Hono } from 'hono';
 import type { Env } from './env';
 import { bearerToken, tokenMatches } from './auth';
 import { tokenKeyError } from './crypto';
+import { startConnect } from './connect';
 import { homePage, privacyPage, resultPage, termsPage } from './pages';
-import { pkceChallenge, randomToken } from './oauth';
+import { randomToken } from './oauth';
 import {
 	cancelJob,
 	createJob,
@@ -20,7 +21,6 @@ import {
 	listAccounts,
 	listJobs,
 	putMedia,
-	putState,
 	rescheduleJob,
 	takeState,
 	saveAccount,
@@ -84,27 +84,21 @@ app.get('/meta/delete', (c) => c.html(privacyPage()));
 app.get('/meta/uninstall', (c) => c.json({ ok: true }));
 
 // ---- 接続（ブラウザー） ----
-app.get('/connect/:platform', async (c) => {
-	const platform = c.req.param('platform');
-	const t = c.req.query('t');
-	if (!tokenMatches(t, c.env.HUB_TOKEN))
-		return c.html(resultPage(false, '合言葉が違います。アプリの設定から開き直してください。'), 403);
-	const publisher = getPublisher(platform);
-	if (!publisher) return c.html(resultPage(false, `${platform} にはまだ対応していません。`), 404);
-	const missing = publisher.missingConfig(c.env);
-	if (missing) return c.html(resultPage(false, missing), 500);
-	// トークンを入れる鍵が無ければ、SNS の許可画面へ送る前に止める（戻ってきてから失敗させない）
-	const keyErr = tokenKeyError(c.env);
-	if (keyErr) return c.html(resultPage(false, keyErr), 500);
-	const state = randomToken(24);
-	const verifier = randomToken(48);
-	await putState(c.env.DB, state, publisher.platform, verifier);
-	const url = publisher.authorizeUrl(c.env, state, await pkceChallenge(verifier));
-	return c.redirect(url, 302);
-});
+// 接続はアプリから始める（POST /api/connect/:platform。合言葉は Bearer で送る）。
+// 前は /connect/:platform?t=合言葉 をブラウザーで開いていたが、合言葉がブラウザーの履歴やログに残るのでやめた（2026-11-02）。
+// 古いアプリから来たときは合言葉を見ずに、新しくするように言うだけ
+app.get('/connect/:platform', (c) =>
+	c.html(
+		resultPage(
+			false,
+			'この開き方は使えなくなりました。アプリを新しくしてから、設定の「ブラウザーで接続」を押し直してください。'
+		),
+		410
+	)
+);
 
 app.get('/connect/:platform/callback', async (c) => {
-	// 合言葉は開始時（/connect/:platform）で確かめ済み。戻りは、そのとき D1 に置いた乱数 state が合うかだけで確かめる
+	// 合言葉は開始時（POST /api/connect/:platform の Bearer）で確かめ済み。戻りは、そのとき D1 に置いた乱数 state が合うかだけで確かめる
 	// （cookie はブラウザーの設定次第で届かないことがあるので頼らない）
 	const platform = c.req.param('platform');
 	const publisher = getPublisher(platform);
@@ -289,6 +283,13 @@ api.get('/tiktok/creator', async (c) => {
 });
 // 手で cron 相当を回す（確認用）
 api.post('/run', async (c) => c.json({ ran: await runDue(c.env) }));
+
+// SNS の接続を始める。許可画面の URL を返し、アプリがそれをブラウザーで開く（connect.ts）。
+// 合言葉は上の Bearer で確かめ済み、TOKEN_KEY もあるので、戻ってきてから失敗しない
+api.post('/connect/:platform', async (c) => {
+	const r = await startConnect(c.env, c.req.param('platform'));
+	return 'url' in r ? c.json({ url: r.url }) : c.json({ error: r.error }, r.status);
+});
 
 app.route('/api', api);
 

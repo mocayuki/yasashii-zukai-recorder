@@ -6,7 +6,6 @@ import type {
 	HubPlatform,
 	HubPostRequest,
 	UploadProgress,
-	YouTubeAuth,
 	YouTubeUploadRequest,
 	YouTubeUploadResult,
 	TikTokPostOptions,
@@ -359,6 +358,14 @@ export interface StorageInfo {
 	recordingCount: number;
 }
 
+/**
+ * 鍵・合言葉の名前。中身は settings.json に書かず、この Mac のキーチェーンに置く（electron/lib/secrets.ts）。
+ * 画面には中身を渡さず、有る／無いだけ（SecretStatus）
+ */
+export type SecretName = 'openaiApiKey' | 'youtubeClientSecret' | 'hubToken';
+export type SecretStatus = Record<SecretName, boolean>;
+
+/** アプリの設定（userData の settings.json）。鍵・トークンは入れない（SecretName はキーチェーン） */
 export interface Settings {
 	libraryPath: string;
 	/** 収録に使うマイク（null = OS の既定） */
@@ -377,8 +384,6 @@ export interface Settings {
 	bgmDuck: boolean;
 	/** 下げている間の BGM の音量（元の音量に対する割合 0〜1） */
 	bgmDuckLevel: number;
-	/** OpenAI の API キー（文字起こし用。ここ = userData の settings.json にだけ置く） */
-	openaiApiKey: string | null;
 	/** 書き起こしで書き方を寄せたい言葉（固有名詞など）。1 行 1 語。whisper の prompt に入れる */
 	transcriptTerms: string;
 	/** 書き起こし後に機械的に直す組。「誤り → 正しい」を 1 行 1 組 */
@@ -387,14 +392,10 @@ export interface Settings {
 	noiseReduction: NoiseReduction;
 	/** 字幕ファイルを保存するときに一緒に作る外国語版（言語コード） */
 	subtitleLanguages: string[];
-	/** YouTube: Google Cloud の OAuth クライアント（デスクトップ アプリ）。この Mac の settings.json にだけ置く */
+	/** YouTube: Google Cloud の OAuth クライアント（デスクトップ アプリ）の ID。シークレットと接続のトークンはキーチェーン（SecretName） */
 	youtubeClientId: string | null;
-	youtubeClientSecret: string | null;
-	/** YouTube の接続（トークン）。未接続なら null */
-	youtubeAuth: YouTubeAuth | null;
-	/** 投稿ハブ（hub/ の Cloudflare Worker）の URL と合言葉。X・Threads・Instagram・TikTok はここ経由 */
+	/** 投稿ハブ（hub/ の Cloudflare Worker）の URL。合言葉はキーチェーン（SecretName）。X・Threads・Instagram・TikTok はここ経由 */
 	hubUrl: string | null;
-	hubToken: string | null;
 	/** 前回のウィンドウの位置と大きさ（次に開くときに戻す） */
 	windowBounds: { x: number; y: number; width: number; height: number } | null;
 	/** ワークスペース（編集・収録の画面）を開いているときのウィンドウの位置と大きさ。一覧とは別に覚える */
@@ -458,6 +459,16 @@ export interface PresentState {
 	openImage?: string | null;
 }
 
+/** YouTube の接続の様子（トークンそのものは画面に渡さない） */
+export interface YouTubeStatus {
+	connected: boolean;
+	channelTitle: string | null;
+	/** クライアント ID とシークレットが両方入っているか */
+	hasClient: boolean;
+	/** 予約の取り消し（動画の削除）の許可があるか。無ければ設定でつなぎ直す */
+	canDelete: boolean;
+}
+
 /** 画面から呼べる処理の一覧。preload で window.api として公開する */
 export interface Api {
 	settings: {
@@ -465,6 +476,10 @@ export interface Api {
 		save(patch: Partial<Settings>): Promise<Settings>;
 		chooseLibraryFolder(): Promise<string | null>;
 		openLibraryFolder(): Promise<void>;
+		/** 鍵・合言葉が入っているか（中身は画面に来ない。キーチェーンにある） */
+		secrets(): Promise<SecretStatus>;
+		/** 鍵・合言葉をキーチェーンに置く（null か空で消す）。置いたあとの有る／無しを返す */
+		setSecret(name: SecretName, value: string | null): Promise<SecretStatus>;
 	};
 	bgm: {
 		list(): Promise<BgmTrack[]>;
@@ -563,6 +578,8 @@ export interface Api {
 	};
 	app: {
 		version(): Promise<string>;
+		/** 開いたときに 1 回だけ知らせること（鍵をキーチェーンに移した など）。返したら消える */
+		startupNotices(): Promise<string[]>;
 		/** 収録画面用に、ウィンドウを画面全体にする／戻す */
 		setFullScreen(flag: boolean): Promise<void>;
 		/** ウィンドウの地の色（大きさを変えるときに描画の隙間から見える色） */
@@ -586,11 +603,7 @@ export interface Api {
 	};
 	/** 投稿（まずは YouTube。X・Threads・Instagram・TikTok は投稿ハブ経由で順に足す） */
 	publish: {
-		youtubeStatus(): Promise<{
-			connected: boolean;
-			channelTitle: string | null;
-			hasClient: boolean;
-		}>;
+		youtubeStatus(): Promise<YouTubeStatus>;
 		/** ブラウザーで Google にログインして許可する。チャンネル名を返す */
 		youtubeConnect(): Promise<string>;
 		youtubeDisconnect(): Promise<void>;

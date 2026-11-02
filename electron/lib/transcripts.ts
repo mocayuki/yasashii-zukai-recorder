@@ -411,11 +411,11 @@ export async function generateTranscript(
 		const pairs = opts.replacements ?? [];
 		// 無音の所の文（作り話）や、同じ言葉の繰り返しは落とす
 		const { kept, dropped } = dropHallucinations(json.segments ?? [], '', []);
-		if (dropped.length)
-			console.log(
-				'[transcribe] 作り話を落とした:',
-				dropped.map((d) => `${d.start}-${d.end} ${d.text}`).join(' | ')
-			);
+		// 発話の本文はログに出さない（件数と長さだけ）
+		if (dropped.length) {
+			const secs = dropped.reduce((sum, d) => sum + Math.max(0, d.end - d.start), 0);
+			console.log(`[transcribe] 作り話を落とした: ${dropped.length} 件、${secs.toFixed(1)} 秒分`);
+		}
 		const cues = toCues(
 			kept,
 			json.words ?? [],
