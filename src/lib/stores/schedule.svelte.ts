@@ -3,8 +3,14 @@
  * 画面（ScheduleScreen）を閉じても送信は続き、進み具合は画面の隅の帯（ExportBar）に出る。
  * 送信そのものは Electron 側（アップロード）なので、画面を離れても止まらない。アプリの終了だけは避ける
  */
-import { withPostRecords, type ExportInfo, type PostRecord, type Recording } from '$shared/types';
-import { PLATFORMS, type HubJob, type Platform } from '$shared/publish';
+import {
+	exportsOf,
+	withPostRecords,
+	type ExportInfo,
+	type PostRecord,
+	type Recording
+} from '$shared/types';
+import { draftsStillConfirmed, PLATFORMS, type HubJob, type Platform } from '$shared/publish';
 import { api } from '$lib/api';
 import { library } from '$lib/stores/library.svelte';
 import { toast } from '$lib/stores/toast.svelte';
@@ -107,15 +113,25 @@ class ScheduleStore {
 					const note = library.notes.find((x) => x.id === p.recording.noteId) ?? null;
 					const iso = p.when.toISOString();
 					const records: PostRecord[] = [];
-					for (const plat of p.remaining) {
+					for (const [i, plat] of p.remaining.entries()) {
 						if (this.#canceled.has(p.id)) break;
+						// 置いたときの写し（p.ex）でなく、いまの書き出しを見る。いまの文が確定したときのままでなければ送らない
+						// （確定のあとで AI で作り直したり直したりした文を、そのまま送っていた。運用保守 K228）
+						const latest = confirmedExport(p.recording, p.ex.id);
+						if (!latest) {
+							const unsent = p.remaining.slice(i).map(label).join('・');
+							failed.push(
+								`${p.recording.title}: 確定のあとで投稿文が変わっています（${unsent} は送っていません）。投稿の画面で読んで、もう一度「投稿文を確定する」を押してください`
+							);
+							break;
+						}
 						this.applying = `${n}/${list.length} ${p.recording.title} → ${label(plat)} を予約しています…`;
 						this.#watching = progressId(p.recording.id, plat);
 						this.ratio = 0;
-						const draft = p.ex.drafts?.[plat];
+						const draft = latest.ex.drafts?.[plat];
 						if (!draft) continue;
 						try {
-							const r = await postOne(plat, p.recording, p.ex, draft, note, iso);
+							const r = await postOne(plat, latest.recording, latest.ex, draft, note, iso);
 							records.push(r.record);
 							if (r.warning) toast.error(r.warning);
 						} catch (err) {
@@ -150,6 +166,17 @@ class ScheduleStore {
 			this.finished++;
 		}
 	}
+}
+
+/** いまの収録と書き出し。投稿文が確定したときのままでなければ null（運用保守 K228） */
+function confirmedExport(
+	placed: Recording,
+	exportId: string
+): { recording: Recording; ex: ExportInfo } | null {
+	const recording = library.recordings.find((r) => r.id === placed.id);
+	const ex = recording ? exportsOf(recording).find((e) => e.id === exportId) : undefined;
+	if (!recording || !ex || !draftsStillConfirmed(ex)) return null;
+	return { recording, ex };
 }
 
 /** 予約の日時を動かす（YouTube は動画の公開日時、ほかはハブの仕事） */

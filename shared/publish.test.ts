@@ -2,12 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { clipTranscript, fitX, postingHoursError, shortsTitle, trimBounds } from './publish';
 import {
 	defaultTargets,
+	draftsStillConfirmed,
+	exportStatus,
 	parseTags,
 	scheduleError,
 	tidyDescription,
+	withDrafts,
 	xWeightedLength,
 	hubTextError
 } from './publish';
+import type { ExportInfo, PostDraft } from './types';
 
 describe('投稿の規則', () => {
 	it('既定の投稿先は 5 つ（TikTok と note は既定でオフ）', () => {
@@ -95,5 +99,106 @@ describe('postingHoursError', () => {
 		expect(postingHoursError(at(23, 30))).toBeNull();
 		expect(postingHoursError(at(23, 45))).toMatch(/12:00/);
 		expect(postingHoursError(at(6, 0))).toMatch(/12:00/);
+	});
+});
+
+describe('投稿文の確定（運用保守 K228: 確定のあとで変わった文を、投稿管理から送らない）', () => {
+	const draft = (text: string): PostDraft => ({
+		on: true,
+		title: '題',
+		text,
+		tagsText: '',
+		thumbMode: 'auto',
+		thumbnailPath: null,
+		startSec: null,
+		trimSec: 60,
+		privacy: 'public'
+	});
+	const ex = (over: Partial<ExportInfo> = {}): ExportInfo => ({
+		id: 'e1',
+		fileName: 'r1-e1.mp4',
+		size: 1,
+		createdAt: 1,
+		...over
+	});
+	const noPosts = { posts: [] };
+
+	it('確定すると、確定の印とそのときの文の写しが付く', () => {
+		const saved = withDrafts(ex(), { x: draft('確定した文') }, true, 1000);
+		expect(saved.confirmedAt).toBe(1000);
+		expect(saved.confirmedDrafts).toEqual({ x: draft('確定した文') });
+		expect(draftsStillConfirmed(saved)).toBe(true);
+		expect(exportStatus(noPosts, saved)).toBe('ready');
+	});
+	it('確定のあとで文を直して自動で保存すると、確定の印が外れる', () => {
+		const confirmed = withDrafts(ex(), { x: draft('確定した文') }, true, 1000);
+		const edited = withDrafts(confirmed, { x: draft('AI で作り直した文') }, false);
+		expect(edited.confirmedAt).toBeUndefined();
+		expect(edited.confirmedDrafts).toBeUndefined();
+		expect(edited.drafts?.x?.text).toBe('AI で作り直した文');
+		expect(draftsStillConfirmed(edited)).toBe(false);
+		expect(exportStatus(noPosts, edited)).toBe('writing');
+	});
+	it('文が同じままの自動の保存（キーの順番・空の値の有る無しだけちがう）では、確定の印は残る', () => {
+		const confirmed = withDrafts(ex(), { x: draft('確定した文') }, true, 1000);
+		const { startSec: _drop, ...rest } = draft('確定した文');
+		const reordered = Object.fromEntries(Object.entries(rest).reverse()) as unknown as PostDraft;
+		const saved = withDrafts(confirmed, { x: reordered }, false);
+		expect(saved.confirmedAt).toBe(1000);
+		expect(draftsStillConfirmed(saved)).toBe(true);
+	});
+	it('題・長さ・オンオフが変わっても、確定の印が外れる', () => {
+		const confirmed = withDrafts(ex(), { x: draft('文') }, true, 1000);
+		expect(
+			withDrafts(confirmed, { x: { ...draft('文'), title: '別の題' } }, false).confirmedAt
+		).toBeUndefined();
+		expect(
+			withDrafts(confirmed, { x: { ...draft('文'), trimSec: 30 } }, false).confirmedAt
+		).toBeUndefined();
+		expect(
+			withDrafts(confirmed, { x: draft('文'), threads: draft('文') }, false).confirmedAt
+		).toBeUndefined();
+	});
+	it('TikTok の設定は、画面を開くたびに入れなおされても同じなら印が残り、変わると外れる', () => {
+		const tiktok = {
+			privacy: 'SELF_ONLY',
+			allowComment: true,
+			allowDuet: false,
+			allowStitch: false,
+			commercial: false,
+			brandOrganic: false,
+			brandContent: false
+		} as const;
+		const withTikTok = { ...draft('文'), tiktok };
+		const confirmed = withDrafts(ex(), { tiktok: withTikTok }, true, 1000);
+		expect(
+			withDrafts(confirmed, { tiktok: { ...withTikTok, tiktok: { ...tiktok } } }, false).confirmedAt
+		).toBe(1000);
+		expect(
+			withDrafts(
+				confirmed,
+				{ tiktok: { ...withTikTok, tiktok: { ...tiktok, allowComment: false } } },
+				false
+			).confirmedAt
+		).toBeUndefined();
+	});
+	it('確定の印が付いたまま文が変わっている書き出し（前の形のデータ）は、確定していないとみなす', () => {
+		const stale = ex({
+			drafts: { x: draft('あとで直した文') },
+			confirmedAt: 1000,
+			confirmedDrafts: { x: draft('確定した文') }
+		});
+		expect(draftsStillConfirmed(stale)).toBe(false);
+		expect(exportStatus(noPosts, stale)).toBe('writing');
+		// 写しの無い、前の版で確定したもの（いまの文が確定のときのままか分からない）
+		const legacy = ex({ drafts: { x: draft('文') }, confirmedAt: 1000 });
+		expect(draftsStillConfirmed(legacy)).toBe(false);
+		expect(exportStatus(noPosts, legacy)).toBe('writing');
+	});
+	it('全部の投稿先に出し終わったものは、写しが無くても配信済みのまま', () => {
+		const legacy = ex({ drafts: { x: draft('文') }, confirmedAt: 1000 });
+		expect(exportStatus({ posts: [{ platform: 'x', at: 2000, exportId: 'e1' }] }, legacy)).toBe(
+			'done'
+		);
 	});
 });

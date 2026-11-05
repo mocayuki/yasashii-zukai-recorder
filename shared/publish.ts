@@ -431,9 +431,55 @@ export function enabledPlatforms(ex: ExportInfo): Platform[] {
 	return PLATFORMS.map((p) => p.id).filter((p) => ex.drafts?.[p]?.on);
 }
 
+/** 投稿文を比べるための形。キーの順番と、空の値（null・undefined）の有る無しでは変わったとみなさない */
+function draftsKey(drafts: ExportInfo['drafts']): string {
+	const tidy = (v: unknown): unknown => {
+		if (Array.isArray(v)) return v.map(tidy);
+		if (v && typeof v === 'object') {
+			const o = v as Record<string, unknown>;
+			return Object.fromEntries(
+				Object.keys(o)
+					.filter((k) => o[k] != null)
+					.sort()
+					.map((k) => [k, tidy(o[k])])
+			);
+		}
+		return v;
+	};
+	return JSON.stringify(tidy(drafts ?? {}));
+}
+
+/**
+ * 確定の印があって、いまの投稿文が確定したときのまま（confirmedDrafts と同じ）か。
+ * 確定のあとで AI で作り直したり直したりしていたら false。写しの無い前の版の確定も、同じか分からないので false（運用保守 K228）
+ */
+export function draftsStillConfirmed(ex: ExportInfo): boolean {
+	if (!ex.confirmedAt || !ex.confirmedDrafts) return false;
+	return draftsKey(ex.drafts) === draftsKey(ex.confirmedDrafts);
+}
+
+/**
+ * 投稿文を保存した書き出しを返す。confirm（「投稿文を確定する」）なら、確定の印と、そのときの文の写しを付ける。
+ * 自動の保存で、確定したときから文が変わっていたら、確定の印と写しを外す
+ * （もう一度確定を押すまで、投稿管理から送らない。運用保守 K228）
+ */
+export function withDrafts(
+	ex: ExportInfo,
+	drafts: NonNullable<ExportInfo['drafts']>,
+	confirm: boolean,
+	now = Date.now()
+): ExportInfo {
+	if (confirm) return { ...ex, drafts, confirmedAt: now, confirmedDrafts: drafts };
+	const next: ExportInfo = { ...ex, drafts };
+	if (!next.confirmedAt || draftsStillConfirmed(next)) return next;
+	const { confirmedAt: _at, confirmedDrafts: _copy, ...unconfirmed } = next;
+	return unconfirmed;
+}
+
 /**
  * 書き出しの状態を決める。自分で選んだ状態があればそれ。
  * 投稿文が無ければ draft。出す投稿先のうち投稿（予約）済みが 0 なら ready、全部なら（まだ待ちがあれば scheduled、無ければ done）、途中なら partial。
+ * まだ出していない投稿先があるのに、いまの文が確定したときのままでなければ writing（投稿管理で置けないように。運用保守 K228）。
  * jobs（ハブの仕事）を渡すと、終わったかどうかをより正しく見る
  */
 export function exportStatus(
@@ -447,6 +493,7 @@ export function exportStatus(
 	const targets = enabledPlatforms(ex);
 	if (!ex.confirmedAt || targets.length === 0) return 'writing';
 	const posted = targets.filter((p) => isPosted(rec, ex, p, jobs));
+	if (posted.length < targets.length && !draftsStillConfirmed(ex)) return 'writing';
 	if (posted.length === 0) return 'ready';
 	if (posted.length < targets.length) return 'partial';
 	const waiting = (rec.posts ?? []).some((p) => {
