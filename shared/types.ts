@@ -187,10 +187,15 @@ export interface ExportInfo {
 	durationMs?: number;
 	/** 自分で付けた「投稿済み」の印（投稿先ごと）。無ければ投稿の記録から決める */
 	posted?: Partial<Record<Platform, boolean>>;
-	/** 投稿文（投稿先ごと）。直すたびに自動で保存される。「投稿文を確定する」で confirmedAt が付き、投稿管理から予約できる */
+	/**
+	 * 投稿文（投稿先ごと）。直すたびに自動で保存される。「投稿文を確定する」で confirmedAt と confirmedDrafts が付き、投稿管理から予約できる。
+	 * 確定のあとで文が変わると、自動の保存で confirmedAt と confirmedDrafts が外れる（withDrafts。運用保守 K228）
+	 */
 	drafts?: Partial<Record<Platform, PostDraft>>;
 	/** 投稿文を確定した時刻（無ければまだ作成中） */
 	confirmedAt?: number;
+	/** 確定したときの投稿文の写し。投稿管理は、いまの drafts がこれと同じときだけ送る */
+	confirmedDrafts?: Partial<Record<Platform, PostDraft>>;
 	/** 自分で選んだ状態（無ければ記録から自動で決める） */
 	statusOverride?: ExportStatus | null;
 }

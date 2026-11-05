@@ -15,6 +15,7 @@
 	} from '$shared/types';
 	import {
 		COMPOSE_TARGETS,
+		draftsStillConfirmed,
 		exportStatus,
 		PLATFORMS,
 		postingHoursError,
@@ -25,7 +26,8 @@
 		type HubJob,
 		type HubPlatform,
 		type Platform,
-		type ComposeResult
+		type ComposeResult,
+		withDrafts
 	} from '$shared/publish';
 	import { api } from '$lib/api';
 	import { library } from '$lib/stores/library.svelte';
@@ -162,14 +164,21 @@
 		saveTimer = setTimeout(() => void saveDrafts(JSON.parse(json) as Drafts, false), 600);
 	});
 	async function saveDrafts(saved: Drafts, confirmed: boolean) {
+		// 確定のあとで文が変わっていたら、確定の印を外して保存する（もう一度確定を押すまで、投稿管理から送らない。運用保守 K228）
+		let unconfirmed = false;
 		await library.updateRecording(recording.id, {
-			exports: exportsOf(recording).map((e) =>
-				e.id === exportId
-					? { ...e, drafts: saved, ...(confirmed ? { confirmedAt: Date.now() } : {}) }
-					: e
-			),
+			exports: exportsOf(recording).map((e) => {
+				if (e.id !== exportId) return e;
+				const next = withDrafts(e, saved, confirmed);
+				unconfirmed = !!e.confirmedAt && !next.confirmedAt;
+				return next;
+			}),
 			export: undefined
 		});
+		if (unconfirmed)
+			toast.show(
+				'確定のあとで投稿文を直したので、確定を外しました。投稿管理で送るには、もう一度確定してください'
+			);
 	}
 
 	// ---- 状態 ----
@@ -657,7 +666,7 @@
 					>
 						{confirming
 							? '確定しています…'
-							: dirty || !thisExport?.confirmedAt
+							: dirty || !thisExport || !draftsStillConfirmed(thisExport)
 								? '投稿文を確定する'
 								: '確定済み（直したらもう一度）'}
 					</button>
